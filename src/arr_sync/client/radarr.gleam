@@ -30,17 +30,19 @@ pub fn notify_file_synced(
 
   let body = json.object([#("name", json.string("DownloadedMoviesScan"))])
 
-  let req =
+  let http_request =
     base_request
     |> request.set_method(Post)
     |> request.set_header("x-api-key", credentials.api_key)
     |> request.set_header("content-type", "application/json")
     |> request.set_body(json.to_string(body))
 
-  use resp <- result.try(httpc.send(req) |> result.map_error(RequestFailed))
+  use http_response <- result.try(
+    httpc.send(http_request) |> result.map_error(RequestFailed),
+  )
 
-  case resp.status {
+  case http_response.status {
     200 | 201 | 202 -> Ok(Nil)
-    status -> Error(UnexpectedStatus(status, resp.body))
+    status -> Error(UnexpectedStatus(status, http_response.body))
   }
 }

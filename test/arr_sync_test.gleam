@@ -1,12 +1,11 @@
-import client/qbittorrent
-import config/config
+import arr_sync/client/qbittorrent
+import arr_sync/config
+import arr_sync/matcher/piece_hasher
+import arr_sync/matcher/torrent_index
+import arr_sync/watcher/fs_watcher
 import gleam/json
 import gleam/option.{None, Some}
 import gleeunit
-import matcher/piece_hasher
-import matcher/torrent_index
-import watcher/event
-import watcher/fs_watcher
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -220,12 +219,12 @@ pub fn classify_treats_a_write_without_the_isfile_flag_as_created_test() {
   assert fs_watcher.classify("/data/media/episode.mkv", [
       "created", "modified", "xattrmod",
     ])
-    == Some(event.Created("/data/media/episode.mkv"))
+    == Some(fs_watcher.Created("/data/media/episode.mkv"))
 }
 
 pub fn classify_maps_removed_to_deleted_test() {
   assert fs_watcher.classify("/data/media/episode.mkv", ["removed"])
-    == Some(event.Deleted("/data/media/episode.mkv"))
+    == Some(fs_watcher.Deleted("/data/media/episode.mkv"))
 }
 
 pub fn classify_ignores_unrelated_flags_test() {

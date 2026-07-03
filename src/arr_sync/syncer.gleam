@@ -1,14 +1,13 @@
-import client/radarr
-import client/sonarr
-import config/config.{type Config}
+import arr_sync/client/radarr
+import arr_sync/client/sonarr
+import arr_sync/config.{type Config}
+import arr_sync/logging
+import arr_sync/matcher/torrent_index
+import arr_sync/watcher/fs_watcher.{type FsEvent}
 import gleam/erlang/process.{type Subject}
 import gleam/option.{None, Some}
 import gleam/otp/actor
 import gleam/string
-import logging
-import matcher/torrent_index
-import watcher/event.{type FsEvent}
-import watcher/fs_watcher
 
 pub type Message {
   HandleFsEvent(FsEvent)
@@ -63,9 +62,10 @@ fn handle_message(
 
 fn handle_fs_event(state: SyncerState, fs_event: FsEvent) -> Nil {
   case fs_event {
-    event.Deleted(_) -> Nil
-    event.Created(path) | event.Renamed(_, path) | event.Moved(_, path) ->
-      resync(state, path)
+    fs_watcher.Deleted(_) -> Nil
+    fs_watcher.Created(path)
+    | fs_watcher.Renamed(_, path)
+    | fs_watcher.Moved(_, path) -> resync(state, path)
   }
 }
 

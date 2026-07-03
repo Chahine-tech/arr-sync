@@ -54,14 +54,16 @@ Matching is done via **BitTorrent piece hashes** (SHA1 of the 16 KB–4 MB chunk
 | Module | Role |
 |---|---|
 | `arr_sync` | CLI (`start`/`match`/`list`/`resync`), OTP supervision tree |
-| `syncer` | Subscribes to the watcher, orchestrates matching + resync |
-| `matcher/torrent_index` | Actor holding the qBittorrent session + the `piece_hash → torrent` index, resolves piece → exact file, calls `renameFile`/`setLocation`/`recheck` |
-| `matcher/piece_hasher` | Hashes a file's first pieces without ever loading the whole thing into memory |
-| `watcher/fs_watcher` | Filesystem watcher (inotify/FSEvents/kqueue depending on the OS) |
-| `client/qbittorrent` | HTTP client for the qBittorrent WebUI API |
-| `client/sonarr` / `client/radarr` | Optional post-resync notifications |
-| `config/config` | Parses `arr-sync.toml` |
-| `logging` | RFC3339-timestamped logs |
+| `arr_sync/syncer` | Subscribes to the watcher, orchestrates matching + resync |
+| `arr_sync/matcher/torrent_index` | Actor holding the qBittorrent session + the `piece_hash → torrent` index, resolves piece → exact file, calls `renameFile`/`setLocation`/`recheck` |
+| `arr_sync/matcher/piece_hasher` | Hashes a file's first pieces without ever loading the whole thing into memory |
+| `arr_sync/watcher/fs_watcher` | Filesystem watcher (inotify/FSEvents/kqueue depending on the OS) |
+| `arr_sync/client/qbittorrent` | HTTP client for the qBittorrent WebUI API |
+| `arr_sync/client/sonarr` / `arr_sync/client/radarr` | Optional post-resync notifications |
+| `arr_sync/config` | Parses `arr-sync.toml` |
+| `arr_sync/logging` | RFC3339-timestamped logs |
+
+All modules live under `arr_sync/` (matching the package name) rather than at the top of `src/` — Gleam's module namespace is global across the whole BEAM, so generic directory names like `client/` or `watcher/` at the top level risk colliding with another package's modules.
 
 Two small Erlang shims (`arr_sync_piece_hasher_ffi.erl`, `arr_sync_fs_watcher_ffi.erl`) handle the low-level work that neither Gleam nor `gleam_stdlib` covers (`file:pread`, `:crypto`, the `:fs` lib) — colocated with their Gleam module, prefixed `arr_sync_` so they don't collide in Erlang's global (unlike Gleam's, not namespaced by directory) module namespace.
 

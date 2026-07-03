@@ -1,4 +1,6 @@
-import client/qbittorrent.{type Session}
+import arr_sync/client/qbittorrent.{type Session}
+import arr_sync/logging
+import arr_sync/matcher/piece_hasher
 import filepath
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
@@ -7,8 +9,6 @@ import gleam/option.{None, Some}
 import gleam/otp/actor
 import gleam/result
 import gleam/string
-import logging
-import matcher/piece_hasher
 
 pub type TorrentFile {
   TorrentFile(
@@ -37,7 +37,7 @@ pub type MatchResult {
 }
 
 pub type ResyncError {
-  UnknownMatch
+  UnknownMatch(torrent_hash: String, piece_hash: String)
   QbittorrentFailure(qbittorrent.QbittorrentError)
 }
 
@@ -280,7 +280,7 @@ fn do_resync(
 ) -> Result(Nil, ResyncError) {
   use #(entry, file) <- result.try(
     resolve(index, torrent_hash, piece_hash)
-    |> result.replace_error(UnknownMatch),
+    |> result.replace_error(UnknownMatch(torrent_hash:, piece_hash:)),
   )
 
   use new_relative_path <- result.try(

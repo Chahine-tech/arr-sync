@@ -1,16 +1,16 @@
 import argv
-import client/qbittorrent
-import config/config
+import arr_sync/client/qbittorrent
+import arr_sync/config
+import arr_sync/logging
+import arr_sync/matcher/torrent_index
+import arr_sync/syncer
+import arr_sync/watcher/fs_watcher
 import gleam/dict
 import gleam/erlang/process
 import gleam/list
 import gleam/otp/static_supervisor as supervisor
 import gleam/otp/supervision
 import gleam/string
-import logging
-import matcher/torrent_index
-import syncer
-import watcher/fs_watcher
 
 pub fn main() {
   case argv.load().arguments {

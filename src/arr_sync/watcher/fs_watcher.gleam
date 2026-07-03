@@ -4,7 +4,13 @@ import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/otp/actor
-import watcher/event.{type FsEvent}
+
+pub type FsEvent {
+  Created(path: String)
+  Renamed(from: String, to: String)
+  Moved(from: String, to: String)
+  Deleted(path: String)
+}
 
 pub type Message {
   Subscribe(listener: Subject(FsEvent))
@@ -77,14 +83,14 @@ pub fn classify(path: String, flags: List(String)) -> option.Option(FsEvent) {
     True -> None
     False ->
       case list.contains(flags, "removed") {
-        True -> Some(event.Deleted(path))
+        True -> Some(Deleted(path))
         False ->
           case
             list.contains(flags, "created")
             || list.contains(flags, "renamed")
             || list.contains(flags, "modified")
           {
-            True -> Some(event.Created(path))
+            True -> Some(Created(path))
             False -> None
           }
       }

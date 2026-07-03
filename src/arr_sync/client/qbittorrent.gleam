@@ -38,28 +38,30 @@ pub fn login(credentials: Credentials) -> Result(Session, QbittorrentError) {
     <> "&password="
     <> uri.percent_encode(credentials.password)
 
-  let req =
+  let http_request =
     base_request
     |> request.set_method(Post)
     |> request.set_header("content-type", "application/x-www-form-urlencoded")
     |> request.set_body(body)
 
-  use resp <- result.try(httpc.send(req) |> result.map_error(RequestFailed))
+  use http_http_responseonse <- result.try(
+    httpc.send(http_request) |> result.map_error(RequestFailed),
+  )
 
   // Older qBittorrent returns 200 with a "Ok."/"Fails." body; 5.x returns
   // 204 with no body — verified against a live 5.2.2 container.
-  case resp.status {
-    200 | 204 -> extract_session(credentials.url, resp)
-    status -> Error(AuthenticationRejected(status, resp.body))
+  case http_http_responseonse.status {
+    200 | 204 -> extract_session(credentials.url, http_http_responseonse)
+    status -> Error(AuthenticationRejected(status, http_http_responseonse.body))
   }
 }
 
 fn extract_session(
   base_url: String,
-  resp: Response(String),
+  http_http_responseonse: Response(String),
 ) -> Result(Session, QbittorrentError) {
   use set_cookie <- result.try(
-    response.get_header(resp, "set-cookie")
+    response.get_header(http_http_responseonse, "set-cookie")
     |> result.replace_error(MissingSessionCookie),
   )
 
@@ -75,8 +77,8 @@ fn extract_session(
 pub fn list_torrents(
   session: Session,
 ) -> Result(List(TorrentSummary), QbittorrentError) {
-  use resp <- result.try(get(session, "/api/v2/torrents/info"))
-  decode_body(resp, decode.list(torrent_summary_decoder()))
+  use http_http_responseonse <- result.try(get(session, "/api/v2/torrents/info"))
+  decode_body(http_http_responseonse, decode.list(torrent_summary_decoder()))
 }
 
 /// GET /api/v2/torrents/files
@@ -84,11 +86,14 @@ pub fn torrent_files(
   session: Session,
   torrent_hash: String,
 ) -> Result(List(RemoteTorrentFile), QbittorrentError) {
-  use resp <- result.try(get(
+  use http_http_responseonse <- result.try(get(
     session,
     "/api/v2/torrents/files?hash=" <> uri.percent_encode(torrent_hash),
   ))
-  decode_body(resp, decode.list(remote_torrent_file_decoder()))
+  decode_body(
+    http_http_responseonse,
+    decode.list(remote_torrent_file_decoder()),
+  )
 }
 
 /// GET /api/v2/torrents/properties — piece_size isn't in torrents/info,
@@ -97,11 +102,11 @@ pub fn properties(
   session: Session,
   torrent_hash: String,
 ) -> Result(TorrentProperties, QbittorrentError) {
-  use resp <- result.try(get(
+  use http_http_responseonse <- result.try(get(
     session,
     "/api/v2/torrents/properties?hash=" <> uri.percent_encode(torrent_hash),
   ))
-  decode_body(resp, properties_decoder())
+  decode_body(http_http_responseonse, properties_decoder())
 }
 
 /// GET /api/v2/torrents/pieceHashes — the key to matching
@@ -109,11 +114,11 @@ pub fn piece_hashes(
   session: Session,
   torrent_hash: String,
 ) -> Result(List(String), QbittorrentError) {
-  use resp <- result.try(get(
+  use http_http_responseonse <- result.try(get(
     session,
     "/api/v2/torrents/pieceHashes?hash=" <> uri.percent_encode(torrent_hash),
   ))
-  decode_body(resp, decode.list(decode.string))
+  decode_body(http_http_responseonse, decode.list(decode.string))
 }
 
 /// POST /api/v2/torrents/setLocation — moves the torrent to a different
@@ -130,7 +135,7 @@ pub fn set_location(
     <> uri.percent_encode(torrent_hash)
     <> "&location="
     <> uri.percent_encode(new_location)
-  use _resp <- result.try(post_form(
+  use _http_response <- result.try(post_form(
     session,
     "/api/v2/torrents/setLocation",
     body,
@@ -156,7 +161,7 @@ pub fn rename_file(
     <> uri.percent_encode(old_path)
     <> "&newPath="
     <> uri.percent_encode(new_path)
-  use _resp <- result.try(post_form(
+  use _http_response <- result.try(post_form(
     session,
     "/api/v2/torrents/renameFile",
     body,
@@ -170,7 +175,11 @@ pub fn recheck(
   torrent_hash: String,
 ) -> Result(Nil, QbittorrentError) {
   let body = "hashes=" <> uri.percent_encode(torrent_hash)
-  use _resp <- result.try(post_form(session, "/api/v2/torrents/recheck", body))
+  use _http_response <- result.try(post_form(
+    session,
+    "/api/v2/torrents/recheck",
+    body,
+  ))
   Ok(Nil)
 }
 
@@ -233,8 +242,8 @@ fn get(
   session: Session,
   path: String,
 ) -> Result(Response(String), QbittorrentError) {
-  use req <- result.try(authenticated_request(session, Get, path))
-  send(req)
+  use http_request <- result.try(authenticated_request(session, Get, path))
+  send(http_request)
 }
 
 fn post_form(
@@ -242,9 +251,9 @@ fn post_form(
   path: String,
   body: String,
 ) -> Result(Response(String), QbittorrentError) {
-  use req <- result.try(authenticated_request(session, Post, path))
+  use http_request <- result.try(authenticated_request(session, Post, path))
   send(
-    req
+    http_request
     |> request.set_header("content-type", "application/x-www-form-urlencoded")
     |> request.set_body(body),
   )
@@ -266,17 +275,22 @@ fn authenticated_request(
   )
 }
 
-fn send(req: Request(String)) -> Result(Response(String), QbittorrentError) {
-  use resp <- result.try(httpc.send(req) |> result.map_error(RequestFailed))
-  case resp.status {
-    200 -> Ok(resp)
-    status -> Error(UnexpectedStatus(status, resp.body))
+fn send(
+  http_request: Request(String),
+) -> Result(Response(String), QbittorrentError) {
+  use http_http_responseonse <- result.try(
+    httpc.send(http_request) |> result.map_error(RequestFailed),
+  )
+  case http_http_responseonse.status {
+    200 -> Ok(http_http_responseonse)
+    status -> Error(UnexpectedStatus(status, http_http_responseonse.body))
   }
 }
 
 fn decode_body(
-  resp: Response(String),
+  http_http_responseonse: Response(String),
   decoder: decode.Decoder(a),
 ) -> Result(a, QbittorrentError) {
-  json.parse(resp.body, decoder) |> result.map_error(DecodeFailed)
+  json.parse(http_http_responseonse.body, decoder)
+  |> result.map_error(DecodeFailed)
 }
