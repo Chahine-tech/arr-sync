@@ -63,9 +63,7 @@ Matching is done via **BitTorrent piece hashes** (SHA1 of the 16 KB–4 MB chunk
 | `arr_sync/config` | Parses `arr-sync.toml` |
 | `arr_sync/logging` | RFC3339-timestamped logs |
 
-All modules live under `arr_sync/` (matching the package name) rather than at the top of `src/` — Gleam's module namespace is global across the whole BEAM, so generic directory names like `client/` or `watcher/` at the top level risk colliding with another package's modules.
-
-Two small Erlang shims (`arr_sync_piece_hasher_ffi.erl`, `arr_sync_fs_watcher_ffi.erl`) handle the low-level work that neither Gleam nor `gleam_stdlib` covers (`file:pread`, `:crypto`, the `:fs` lib) — colocated with their Gleam module, prefixed `arr_sync_` so they don't collide in Erlang's global (unlike Gleam's, not namespaced by directory) module namespace.
+Module names are global across the whole BEAM, so both layers are namespaced to avoid collisions with other packages: Gleam modules live under `arr_sync/` (matching the package name) instead of at the top of `src/`, and the two Erlang FFI shims (`arr_sync_piece_hasher_ffi.erl`, `arr_sync_fs_watcher_ffi.erl` — handling `file:pread`, `:crypto`, and the `:fs` lib, none of which Gleam or `gleam_stdlib` cover) are prefixed `arr_sync_` and colocated with the Gleam module that calls them.
 
 ---
 
