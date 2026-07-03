@@ -179,21 +179,28 @@ pub type TorrentSummary {
 }
 
 pub type RemoteTorrentFile {
-  RemoteTorrentFile(name: String, size: Int, progress: Float)
+  RemoteTorrentFile(
+    name: String,
+    size: Int,
+    progress: Float,
+    piece_range: #(Int, Int),
+  )
 }
 
 pub type TorrentProperties {
   TorrentProperties(piece_size: Int)
 }
 
-fn torrent_summary_decoder() -> decode.Decoder(TorrentSummary) {
+@internal
+pub fn torrent_summary_decoder() -> decode.Decoder(TorrentSummary) {
   use hash <- decode.field("hash", decode.string)
   use name <- decode.field("name", decode.string)
   use save_path <- decode.field("save_path", decode.string)
   decode.success(TorrentSummary(hash:, name:, save_path:))
 }
 
-fn remote_torrent_file_decoder() -> decode.Decoder(RemoteTorrentFile) {
+@internal
+pub fn remote_torrent_file_decoder() -> decode.Decoder(RemoteTorrentFile) {
   use name <- decode.field("name", decode.string)
   use size <- decode.field("size", decode.int)
   // qBittorrent serialises whole-number progress (e.g. complete files) as a
@@ -202,10 +209,22 @@ fn remote_torrent_file_decoder() -> decode.Decoder(RemoteTorrentFile) {
     "progress",
     decode.one_of(decode.float, or: [decode.int |> decode.map(int.to_float)]),
   )
-  decode.success(RemoteTorrentFile(name:, size:, progress:))
+  // [start, end] piece indices this file spans — verified live: qBittorrent
+  // computes this for us, sparing us cumulative file-offset arithmetic.
+  use piece_range <- decode.field("piece_range", piece_range_decoder())
+  decode.success(RemoteTorrentFile(name:, size:, progress:, piece_range:))
 }
 
-fn properties_decoder() -> decode.Decoder(TorrentProperties) {
+fn piece_range_decoder() -> decode.Decoder(#(Int, Int)) {
+  use values <- decode.then(decode.list(decode.int))
+  case values {
+    [start, end] -> decode.success(#(start, end))
+    _ -> decode.failure(#(0, 0), "piece_range")
+  }
+}
+
+@internal
+pub fn properties_decoder() -> decode.Decoder(TorrentProperties) {
   use piece_size <- decode.field("piece_size", decode.int)
   decode.success(TorrentProperties(piece_size:))
 }

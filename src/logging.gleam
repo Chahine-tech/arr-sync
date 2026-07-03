@@ -1,4 +1,6 @@
 import gleam/io
+import gleam/time/duration
+import gleam/time/timestamp
 
 pub type Level {
   Debug
@@ -8,7 +10,8 @@ pub type Level {
 }
 
 pub fn log(level: Level, message: String) -> Nil {
-  io.println("[" <> level_label(level) <> "] " <> message)
+  let now = timestamp.to_rfc3339(timestamp.system_time(), duration.seconds(0))
+  io.println(now <> " [" <> level_label(level) <> "] " <> message)
 }
 
 fn level_label(level: Level) -> String {

@@ -1,12 +1,13 @@
 import argv
 import client/qbittorrent
 import config/config
+import gleam/dict
 import gleam/erlang/process
+import gleam/list
 import gleam/otp/static_supervisor as supervisor
 import gleam/otp/supervision
 import gleam/string
 import logging
-import matcher/piece_hasher
 import matcher/torrent_index
 import syncer
 import watcher/fs_watcher
@@ -17,10 +18,12 @@ pub fn main() {
     ["start", "--config", path] -> start(path)
     ["match", path] -> match_file(path)
     ["status"] ->
-      todo as "read daemon state, e.g. via a registered process name"
-    ["list"] -> todo as "ask torrent_index for its indexed entries"
-    ["resync", _torrent_hash] ->
-      todo as "force a resync on a single torrent hash"
+      logging.log(
+        logging.Error,
+        "status requires querying a running daemon over distributed Erlang, which isn't wired up yet — run `arr_sync start` in the foreground and read its logs instead",
+      )
+    ["list"] -> list_torrents()
+    ["resync", torrent_hash] -> force_resync(torrent_hash)
     _ ->
       logging.log(
         logging.Error,
@@ -41,25 +44,29 @@ fn start(config_path: String) -> Nil {
           password: loaded_config.qbittorrent.password,
         )
 
-      // Created once at startup and closed over by both children below, so
-      // syncer can look up torrent_index's Subject without a runtime handshake.
+      // Created once at startup and closed over by the children below, so
+      // syncer can look up torrent_index's and fs_watcher's Subjects
+      // without a runtime handshake.
       let index_name = process.new_name("torrent_index")
+      let watcher_name = process.new_name("fs_watcher")
 
       let assert Ok(_supervisor) =
         supervisor.new(supervisor.OneForOne)
         |> supervisor.add(
           supervision.worker(fn() {
-            fs_watcher.start(loaded_config.watch.paths)
+            fs_watcher.start(loaded_config.watch.paths, watcher_name)
           }),
         )
         |> supervisor.add(
           supervision.worker(fn() {
             torrent_index.start(credentials, index_name)
           })
-          |> supervision.timeout(ms: 10_000),
+          |> supervision.timeout(ms: 20_000),
         )
         |> supervisor.add(
-          supervision.worker(fn() { syncer.start(loaded_config, index_name) }),
+          supervision.worker(fn() {
+            syncer.start(loaded_config, index_name, watcher_name)
+          }),
         )
         |> supervisor.restart_tolerance(intensity: 3, period: 60)
         |> supervisor.start
@@ -70,7 +77,10 @@ fn start(config_path: String) -> Nil {
   }
 }
 
-fn match_file(path: String) -> Nil {
+/// Loads arr-sync.toml, logs into qBittorrent, and hands the session to
+/// `action` — shared by every CLI subcommand that just needs one-off
+/// access to qBittorrent, without the daemon's supervision tree.
+fn with_session(action: fn(qbittorrent.Session) -> Nil) -> Nil {
   case config.load("arr-sync.toml") {
     Error(_reason) ->
       logging.log(logging.Error, "failed to load config from arr-sync.toml")
@@ -83,18 +93,48 @@ fn match_file(path: String) -> Nil {
         )
       case qbittorrent.login(credentials) {
         Error(_reason) -> logging.log(logging.Error, "qBittorrent login failed")
-        Ok(session) -> {
-          let index = torrent_index.fetch_index(session)
-          report_match(path, index)
-        }
+        Ok(session) -> action(session)
       }
     }
   }
 }
 
+fn match_file(path: String) -> Nil {
+  use session <- with_session()
+  let index = torrent_index.fetch_index(session)
+  report_match(path, index)
+}
+
+fn list_torrents() -> Nil {
+  use session <- with_session()
+  let index = torrent_index.fetch_index(session)
+  case dict.values(index.torrents) {
+    [] -> logging.log(logging.Info, "no torrents indexed")
+    entries ->
+      list.each(entries, fn(entry) {
+        logging.log(logging.Info, entry.hash <> "  " <> entry.name)
+      })
+  }
+}
+
+fn force_resync(torrent_hash: String) -> Nil {
+  use session <- with_session()
+  case qbittorrent.recheck(session, torrent_hash) {
+    Ok(Nil) ->
+      logging.log(logging.Info, "recheck triggered for " <> torrent_hash)
+    Error(reason) ->
+      logging.log(
+        logging.Error,
+        "recheck failed for " <> torrent_hash <> ": " <> string.inspect(reason),
+      )
+  }
+}
+
 fn report_match(path: String, index: torrent_index.Index) -> Nil {
-  case find_first_match(path, torrent_index.piece_sizes(index), index) {
-    Ok(torrent_index.Matched(torrent_hash)) ->
+  let piece_sizes = torrent_index.piece_sizes(index)
+  let lookup = fn(hash) { torrent_index.find_match(index, hash) }
+  case torrent_index.find_first_match(path, piece_sizes, lookup) {
+    Ok(torrent_index.Matched(torrent_hash, _piece_hash)) ->
       logging.log(logging.Info, path <> " matches torrent " <> torrent_hash)
     Ok(torrent_index.Ambiguous(candidates)) ->
       logging.log(
@@ -103,33 +143,5 @@ fn report_match(path: String, index: torrent_index.Index) -> Nil {
       )
     Ok(torrent_index.NoMatch) | Error(Nil) ->
       logging.log(logging.Info, "no torrent matches " <> path)
-  }
-}
-
-/// Tries each distinct piece size present in the index (a candidate file's
-/// piece hash only lines up with a torrent using the same piece size),
-/// stopping at the first size that produces a match.
-fn find_first_match(
-  path: String,
-  piece_sizes: List(Int),
-  index: torrent_index.Index,
-) -> Result(torrent_index.MatchResult, Nil) {
-  case piece_sizes {
-    [] -> Error(Nil)
-    [piece_size, ..rest] ->
-      case
-        piece_hasher.hash_first_pieces(
-          path,
-          piece_hasher.PieceSize(piece_size),
-          1,
-        )
-      {
-        Ok([piece_hash, ..]) ->
-          case torrent_index.find_match(index, piece_hash) {
-            torrent_index.NoMatch -> find_first_match(path, rest, index)
-            result -> Ok(result)
-          }
-        _ -> find_first_match(path, rest, index)
-      }
   }
 }

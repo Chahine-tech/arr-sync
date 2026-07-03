@@ -1,0 +1,10 @@
+[qbittorrent]
+url = "http://localhost:8080"
+username = "admin"
+
+[watch]
+paths = ["/data/media"]
+
+[sync]
+recheck_delay = 5
+min_file_size_mb = 10

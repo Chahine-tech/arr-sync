@@ -1,0 +1,19 @@
+[qbittorrent]
+url = "http://localhost:8080"
+username = "admin"
+password = "secret"
+
+[watch]
+paths = ["/data/media/movies", "/data/media/tv"]
+
+[sync]
+recheck_delay = 5
+min_file_size_mb = 10
+
+[sonarr]
+url = "http://localhost:8989"
+api_key = "sonarr-key"
+
+[radarr]
+url = "http://localhost:7878"
+api_key = "radarr-key"
