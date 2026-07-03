@@ -1,0 +1,24 @@
+[qbittorrent]
+url = "http://localhost:8080"
+username = "admin"
+password = "password"
+
+[watch]
+paths = [
+  "/data/media/movies",
+  "/data/media/tv",
+  "/data/downloads/complete",
+]
+
+[sync]
+recheck_delay = 5
+min_file_size_mb = 10
+
+# Optional: notify Sonarr/Radarr after a resync
+[sonarr]
+url = "http://localhost:8989"
+api_key = "xxx"
+
+[radarr]
+url = "http://localhost:7878"
+api_key = "xxx"

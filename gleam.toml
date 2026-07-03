@@ -1,0 +1,21 @@
+name = "arr_sync"
+version = "0.1.0"
+description = "Daemon qui resync qBittorrent automatiquement quand Sonarr/Radarr renomme ou déplace des fichiers."
+licences = ["Apache-2.0"]
+
+target = "erlang"
+
+[dependencies]
+gleam_stdlib = ">= 1.0.0 and < 2.0.0"
+gleam_erlang = ">= 1.3.0 and < 2.0.0"
+gleam_otp = ">= 1.2.0 and < 2.0.0"
+gleam_http = ">= 4.3.0 and < 5.0.0"
+gleam_httpc = ">= 5.0.0 and < 6.0.0"
+gleam_json = ">= 3.1.0 and < 4.0.0"
+tom = ">= 2.1.0 and < 3.0.0"
+simplifile = ">= 2.5.0 and < 3.0.0"
+argv = ">= 1.1.0 and < 2.0.0"
+fs = ">= 11.4.1 and < 12.0.0"
+
+[dev_dependencies]
+gleeunit = ">= 1.0.0 and < 2.0.0"
