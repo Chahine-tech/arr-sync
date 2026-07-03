@@ -1,4 +1,4 @@
--module(piece_hasher_ffi).
+-module(arr_sync_piece_hasher_ffi).
 -export([hash_piece/3]).
 
 %% Reads `Length` bytes at `Offset` from `Path` and returns their SHA1 hex

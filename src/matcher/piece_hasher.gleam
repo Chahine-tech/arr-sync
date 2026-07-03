@@ -33,7 +33,7 @@ type PreadError {
   TooSmall
 }
 
-@external(erlang, "piece_hasher_ffi", "hash_piece")
+@external(erlang, "arr_sync_piece_hasher_ffi", "hash_piece")
 fn hash_piece_ffi(
   path: String,
   offset: Int,
