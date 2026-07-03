@@ -62,6 +62,7 @@ Matching is done via **BitTorrent piece hashes** (SHA1 of the 16 KB–4 MB chunk
 | `arr_sync/client/sonarr` / `arr_sync/client/radarr` | Optional post-resync notifications |
 | `arr_sync/config` | Parses `arr-sync.toml` |
 | `arr_sync/logging` | RFC3339-timestamped logs |
+| `arr_sync/distribution` | Distributed Erlang so `arr-sync status` can query a running daemon from a separate process |
 
 Module names are global across the whole BEAM, so both layers are namespaced to avoid collisions with other packages: Gleam modules live under `arr_sync/` (matching the package name) instead of at the top of `src/`, and the two Erlang FFI shims (`arr_sync_piece_hasher_ffi.erl`, `arr_sync_fs_watcher_ffi.erl` — handling `file:pread`, `:crypto`, and the `:fs` lib, none of which Gleam or `gleam_stdlib` cover) are prefixed `arr_sync_` and colocated with the Gleam module that calls them.
 
@@ -83,6 +84,7 @@ arr-sync start --config path/to/config.toml
 arr-sync match /data/media/Show/episode.mkv    # test matching without touching qBittorrent
 arr-sync list                                  # list indexed torrents
 arr-sync resync <torrent_hash>                 # force a qBittorrent recheck
+arr-sync status                                # query a running daemon (torrents indexed, piece sizes seen)
 ```
 
 ## Config
@@ -101,11 +103,9 @@ arr-sync resync <torrent_hash>                 # force a qBittorrent recheck
 
 ## Status
 
-**Works, checked against a live qBittorrent (Docker) and a real filesystem**: auth, `list/files/properties/pieceHashes`, `renameFile`/`setLocation`/`recheck`, the piece hasher (checked byte-for-byte against `shasum`), the filesystem watcher (real FSEvents stream), end-to-end resync on a renamed multi-file torrent.
+**Works, checked against a live qBittorrent (Docker) and a real filesystem**: auth, `list/files/properties/pieceHashes`, `renameFile`/`setLocation`/`recheck`, the piece hasher (checked byte-for-byte against `shasum`), the filesystem watcher (real FSEvents stream), end-to-end resync on a renamed multi-file torrent, `arr-sync start` booting the full daemon, `arr-sync status` querying it live from a separate process.
 
 **Not checked against a live instance**: Sonarr/Radarr notifications (HTTP client only, same shape as the qBittorrent one).
-
-**Not implemented**: `arr-sync status` — would need distributed Erlang to query an already-running daemon; it errors out cleanly instead of crashing.
 
 ### qBittorrent API quirks
 
@@ -116,6 +116,12 @@ Worth knowing if you're touching `client/qbittorrent.gleam`:
 - `piece_size` isn't in `torrents/info`, only in `torrents/properties`
 - `setLocation` alone doesn't fix a rename — without `renameFile`, the torrent drops to 0% instead of resyncing
 - `torrents/files` includes a `piece_range` per file, which avoids computing cumulative file offsets by hand
+
+### `arr-sync status`
+
+The daemon becomes a distributed Erlang node on startup (`arr_sync@<hostname>`), authenticated with a per-install cookie generated on first run and stored in `.arr-sync-cookie` (mode 0600, gitignored — not the shared `~/.erlang.cookie`). `status` starts a short-lived node of its own and reaches the daemon over `rpc:call`. Localhost only by design: distributed Erlang RPC can run arbitrary code once connected, so this isn't meant to be exposed on a network.
+
+Gotcha found while wiring this up: use `inet:gethostname()`, not `net_adm:localhost()`, to build the node name — the latter appends the machine's mDNS suffix (`.local` on macOS), which `node()` itself doesn't use, so the two ends disagree on the daemon's name.
 
 ---
 

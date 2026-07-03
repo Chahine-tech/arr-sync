@@ -1,27 +1,29 @@
 import argv
 import arr_sync/client/qbittorrent
 import arr_sync/config
+import arr_sync/distribution
 import arr_sync/logging
 import arr_sync/matcher/torrent_index
 import arr_sync/syncer
 import arr_sync/watcher/fs_watcher
 import gleam/dict
 import gleam/erlang/process
+import gleam/int
 import gleam/list
 import gleam/otp/static_supervisor as supervisor
 import gleam/otp/supervision
 import gleam/string
+
+/// Short node name the daemon registers under when distribution starts.
+/// The CLI's `status` command dials this same name to reach it.
+const daemon_node_short_name = "arr_sync"
 
 pub fn main() {
   case argv.load().arguments {
     ["start"] -> start("arr-sync.toml")
     ["start", "--config", path] -> start(path)
     ["match", path] -> match_file(path)
-    ["status"] ->
-      logging.log(
-        logging.Error,
-        "status requires querying a running daemon over distributed Erlang, which isn't wired up yet — run `arr_sync start` in the foreground and read its logs instead",
-      )
+    ["status"] -> show_status()
     ["list"] -> list_torrents()
     ["resync", torrent_hash] -> force_resync(torrent_hash)
     _ ->
@@ -44,10 +46,15 @@ fn start(config_path: String) -> Nil {
           password: loaded_config.qbittorrent.password,
         )
 
+      start_distribution()
+
       // Created once at startup and closed over by the children below, so
       // syncer can look up torrent_index's and fs_watcher's Subjects
-      // without a runtime handshake.
-      let index_name = process.new_name("torrent_index")
+      // without a runtime handshake. torrent_index's name is fixed (not
+      // process.new_name's random suffix) so `arr-sync status`, running in
+      // a separate OS process, can reconstruct the same Name and reach it
+      // over distributed Erlang — see arr_sync/distribution.
+      let index_name = distribution.torrent_index_name()
       let watcher_name = process.new_name("fs_watcher")
 
       let assert Ok(_supervisor) =
@@ -73,6 +80,73 @@ fn start(config_path: String) -> Nil {
 
       logging.log(logging.Info, "arr-sync started, watching " <> config_path)
       process.sleep_forever()
+    }
+  }
+}
+
+/// Distribution failing to start (e.g. epmd unavailable in a locked-down
+/// container) is not fatal — the daemon still runs, just unreachable by
+/// `arr-sync status`.
+fn start_distribution() -> Nil {
+  case distribution.load_or_create_cookie() {
+    Error(reason) ->
+      logging.log(
+        logging.Warning,
+        "arr-sync status will not work: " <> string.inspect(reason),
+      )
+    Ok(cookie) ->
+      case distribution.ensure_started(daemon_node_short_name, cookie) {
+        Ok(Nil) ->
+          logging.log(
+            logging.Info,
+            "reachable for `arr-sync status` as " <> distribution.node_name(),
+          )
+        Error(reason) ->
+          logging.log(
+            logging.Warning,
+            "arr-sync status will not work: " <> string.inspect(reason),
+          )
+      }
+  }
+}
+
+fn show_status() -> Nil {
+  case distribution.load_or_create_cookie() {
+    Error(reason) ->
+      logging.log(
+        logging.Error,
+        "cannot access " <> ".arr-sync-cookie: " <> string.inspect(reason),
+      )
+    Ok(cookie) -> {
+      let cli_short_name = "arr_sync_cli_" <> distribution.os_pid()
+      case distribution.ensure_started(cli_short_name, cookie) {
+        Error(reason) ->
+          logging.log(
+            logging.Error,
+            "could not start distributed Erlang: " <> string.inspect(reason),
+          )
+        Ok(Nil) ->
+          case distribution.query_remote_status(daemon_node_short_name) {
+            Ok(status) ->
+              logging.log(
+                logging.Info,
+                "daemon reachable — "
+                  <> int.to_string(status.torrent_count)
+                  <> " torrents indexed, piece sizes seen: "
+                  <> string.inspect(status.piece_sizes),
+              )
+            Error(distribution.DaemonUnreachable) ->
+              logging.log(
+                logging.Error,
+                "daemon not reachable — is `arr-sync start` running?",
+              )
+            Error(reason) ->
+              logging.log(
+                logging.Error,
+                "status query failed: " <> string.inspect(reason),
+              )
+          }
+      }
     }
   }
 }

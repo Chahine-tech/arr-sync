@@ -41,10 +41,15 @@ pub type ResyncError {
   QbittorrentFailure(qbittorrent.QbittorrentError)
 }
 
+pub type IndexStatus {
+  IndexStatus(torrent_count: Int, piece_sizes: List(Int))
+}
+
 pub type Message {
   Refresh
   Lookup(piece_hash: String, reply_to: Subject(MatchResult))
   PieceSizes(reply_to: Subject(List(Int)))
+  Status(reply_to: Subject(IndexStatus))
   Resync(
     torrent_hash: String,
     piece_hash: String,
@@ -105,6 +110,16 @@ fn handle_message(
     }
     PieceSizes(reply_to) -> {
       process.send(reply_to, piece_sizes(state.index))
+      actor.continue(state)
+    }
+    Status(reply_to) -> {
+      process.send(
+        reply_to,
+        IndexStatus(
+          torrent_count: dict.size(state.index.torrents),
+          piece_sizes: piece_sizes(state.index),
+        ),
+      )
       actor.continue(state)
     }
     Resync(torrent_hash, piece_hash, new_absolute_path, reply_to) -> {
