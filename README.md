@@ -2,7 +2,7 @@
 
 > You rename a file, the seeding keeps going. Period.
 
-[![test](https://github.com/Chahine-tech/daemon/actions/workflows/test.yml/badge.svg)](https://github.com/Chahine-tech/daemon/actions/workflows/test.yml)
+[![test](https://github.com/Chahine-tech/arr-sync/actions/workflows/test.yml/badge.svg)](https://github.com/Chahine-tech/arr-sync/actions/workflows/test.yml)
 ![Gleam](https://img.shields.io/badge/gleam-%23FFAFF3.svg?style=flat)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 
