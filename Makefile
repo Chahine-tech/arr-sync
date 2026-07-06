@@ -9,7 +9,18 @@ SHIPMENT_DIR := build/erlang-shipment
 # see "Boot-crash risk" in README.md. This disables that auto-spawn; arr-sync's
 # own per-path watchers still start explicitly afterwards and handle a
 # missing binary cleanly.
-export ERL_FLAGS += -fs backwards_compatible false
+#
+# inet_dist_use_interface binds the distributed Erlang listener to loopback:
+# by default it listens on every interface, exposing an RPC surface (arbitrary
+# code execution for anyone holding the cookie) to the whole LAN. `arr-sync
+# status` only ever dials the local daemon, so nothing legitimate is lost —
+# see "arr-sync status" in README.md.
+export ERL_FLAGS += -fs backwards_compatible false -kernel inet_dist_use_interface '{127,0,0,1}'
+
+# Same reasoning for epmd (spawned by the daemon if not already running):
+# it defaults to *:4369 and answers anyone with the node name -> port map,
+# unauthenticated. arr_sync_distribution_ffi spawns it with this env intact.
+export ERL_EPMD_ADDRESS = 127.0.0.1
 
 help:
 	@echo "make build                             export a standalone OTP release (re-run after every code change)"

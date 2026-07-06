@@ -146,9 +146,10 @@ pub fn find_match_returns_ambiguous_when_two_torrents_share_a_piece_hash_test() 
       sample_entry("torrent-b", ["shared-hash"]),
     ])
 
-  let assert torrent_index.Ambiguous(candidates) =
+  let assert torrent_index.Ambiguous(piece_hash, candidates) =
     torrent_index.find_match(index, "shared-hash")
 
+  assert piece_hash == "shared-hash"
   assert list_contains_both(candidates, "torrent-a", "torrent-b")
 }
 

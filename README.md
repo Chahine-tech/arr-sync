@@ -51,7 +51,7 @@ A common workaround: have Sonarr/Radarr **hardlink** the renamed file into the m
                                  on the qBittorrent side
 ```
 
-Matching is done via **BitTorrent piece hashes** (SHA1 of the 16 KB–4 MB chunks that make up the torrent, listed in the `.torrent`) — they never change as long as the file's content doesn't, unlike its name.
+Matching is done via **BitTorrent piece hashes** (SHA1 of the 16 KB–4 MB chunks that make up the torrent, listed in the `.torrent`) — they never change as long as the file's content doesn't, unlike its name. If several torrents share the matched piece (the same content cross-seeded on multiple trackers), every one of them gets resynced. Resyncs run concurrently: a season-sized import doesn't queue behind the first file's recheck.
 
 ---
 
@@ -116,7 +116,7 @@ Every target runs the exported `build/erlang-shipment/entrypoint.sh` (a standalo
 
 ## Status
 
-**Works, checked against a live qBittorrent (Docker) and a real filesystem**: auth, `list/files/properties/pieceHashes`, `renameFile`/`setLocation`/`recheck`, the piece hasher (checked byte-for-byte against `shasum`), the filesystem watcher (real FSEvents stream), end-to-end resync on a renamed multi-file torrent, `arr-sync start` booting the full daemon, `arr-sync status` querying it live from a separate process (including the resync success/failure counters — both a real resync failure and a real success were triggered and observed via `status`), hybrid (v1+v2) BitTorrent torrents matching correctly out of the box.
+**Works, checked against a live qBittorrent (Docker) and a real filesystem**: auth, `list/files/properties/pieceHashes`, `renameFile`/`setLocation`/`recheck`, the piece hasher (checked byte-for-byte against `shasum`), the filesystem watcher (real FSEvents stream), end-to-end resync on a renamed multi-file torrent, `arr-sync start` booting the full daemon, `arr-sync status` querying it live from a separate process (including the resync success/failure counters — both a real resync failure and a real success were triggered and observed via `status`), hybrid (v1+v2) BitTorrent torrents matching correctly out of the box, two files moved at once resyncing in parallel (`status` answered mid-flight), a cross-seeded file (two torrents, same content, different infohashes) resyncing both torrents.
 
 **Not checked against a live instance**: Sonarr/Radarr notifications (HTTP client only, same shape as the qBittorrent one).
 
@@ -142,7 +142,7 @@ The `Makefile` sets `ERL_FLAGS="-fs backwards_compatible false"` before running 
 
 ### `arr-sync status`
 
-The daemon becomes a distributed Erlang node on startup (`arr_sync@<hostname>`), authenticated with a per-install cookie generated on first run and stored in `.arr-sync-cookie` (mode 0600, gitignored — not the shared `~/.erlang.cookie`). `status` starts a short-lived node of its own and reaches the daemon over `rpc:call`. Localhost only by design: distributed Erlang RPC can run arbitrary code once connected, so this isn't meant to be exposed on a network.
+The daemon becomes a distributed Erlang node on startup (`arr_sync@<hostname>`), authenticated with a per-install cookie generated on first run and stored in `.arr-sync-cookie` (mode 0600, gitignored — not the shared `~/.erlang.cookie`). `status` starts a short-lived node of its own and reaches the daemon over `rpc:call`. Localhost only, and enforced: distributed Erlang RPC can run arbitrary code once connected, and both the distribution listener and epmd default to listening on **every** interface — so the `Makefile` pins them to loopback (`-kernel inet_dist_use_interface '{127,0,0,1}'` and `ERL_EPMD_ADDRESS=127.0.0.1`, verified with `lsof`/LAN probes). One more reason not to call `entrypoint.sh` directly.
 
 Gotcha found while wiring this up: use `inet:gethostname()`, not `net_adm:localhost()`, to build the node name — the latter appends the machine's mDNS suffix (`.local` on macOS), which `node()` itself doesn't use, so the two ends disagree on the daemon's name.
 

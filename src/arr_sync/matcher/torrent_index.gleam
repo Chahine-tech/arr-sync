@@ -10,6 +10,7 @@ import gleam/option.{None, Some}
 import gleam/otp/actor
 import gleam/result
 import gleam/string
+import simplifile
 
 pub type TorrentFile {
   TorrentFile(
@@ -34,11 +35,17 @@ pub type TorrentEntry {
 pub type MatchResult {
   Matched(torrent_hash: String, piece_hash: String)
   NoMatch
-  Ambiguous(candidates: List(String))
+  Ambiguous(piece_hash: String, candidates: List(String))
 }
 
 pub type ResyncError {
   UnknownMatch(torrent_hash: String, piece_hash: String)
+  // The file on disk isn't the size this torrent expects — matching only
+  // hashes a file's first piece, so this catches the (pathological but
+  // seeding-breaking) case of two torrents sharing their first piece and
+  // nothing else: renaming the wrong one would drop it to missing pieces
+  // on recheck.
+  SizeMismatch(torrent_hash: String, expected: Int, actual: Int)
   QbittorrentFailure(qbittorrent.QbittorrentError)
 }
 
@@ -51,8 +58,24 @@ pub type IndexStatus {
   )
 }
 
+/// What a resync attempt ended up doing, sent asynchronously to whoever
+/// requested it — carries the torrent and path so the receiver can log and
+/// react without having blocked waiting for the answer.
+pub type ResyncOutcome {
+  ResyncOutcome(
+    torrent_hash: String,
+    new_absolute_path: String,
+    result: Result(Nil, ResyncError),
+  )
+}
+
 pub type Message {
   Refresh
+  // Sent back by the worker process Refresh spawns — never by other actors.
+  IndexFetched(
+    result: Result(Index, qbittorrent.QbittorrentError),
+    session: Session,
+  )
   Lookup(piece_hash: String, reply_to: Subject(MatchResult))
   PieceSizes(reply_to: Subject(List(Int)))
   Status(reply_to: Subject(IndexStatus))
@@ -60,7 +83,13 @@ pub type Message {
     torrent_hash: String,
     piece_hash: String,
     new_absolute_path: String,
-    reply_to: Subject(Result(Nil, ResyncError)),
+    reply_to: Subject(ResyncOutcome),
+  )
+  // Sent back by the worker process Resync spawns — never by other actors.
+  ResyncFinished(
+    outcome: ResyncOutcome,
+    session: Session,
+    reply_to: Subject(ResyncOutcome),
   )
   Shutdown
 }
@@ -135,8 +164,24 @@ fn handle_message(
   message: Message,
 ) -> actor.Next(IndexState, Message) {
   case message {
+    // Refresh and Resync both hide seconds of latency (HTTP round-trips,
+    // retry backoffs, the recheck delay), so their work runs in a spawned
+    // worker on a snapshot of the state instead of inside the actor — a
+    // Sonarr season import fires many events at once, and every one of them
+    // needs Lookup/PieceSizes answered within the syncer's call timeout
+    // while earlier resyncs are still in flight. The worker reports back
+    // via IndexFetched/ResyncFinished, which is where state (index,
+    // session, counters) actually changes.
     Refresh -> {
-      let #(result, state) = with_retry(state, fetch_index_result)
+      let snapshot = state
+      process.spawn_unlinked(fn() {
+        let #(result, worker_state) = with_retry(snapshot, fetch_index_result)
+        process.send(snapshot.self, IndexFetched(result, worker_state.session))
+      })
+      process.send_after(state.self, refresh_interval_ms, Refresh)
+      actor.continue(state)
+    }
+    IndexFetched(result, session) -> {
       let index = case result {
         Ok(new_index) -> new_index
         Error(reason) -> {
@@ -150,8 +195,7 @@ fn handle_message(
           state.index
         }
       }
-      process.send_after(state.self, refresh_interval_ms, Refresh)
-      actor.continue(IndexState(..state, index:))
+      actor.continue(IndexState(..state, index:, session:))
     }
     Lookup(piece_hash, reply_to) -> {
       process.send(reply_to, find_match(state.index, piece_hash))
@@ -174,28 +218,44 @@ fn handle_message(
       actor.continue(state)
     }
     Resync(torrent_hash, piece_hash, new_absolute_path, reply_to) -> {
-      let #(result, state) =
-        resync_with_retry(
-          state,
-          torrent_hash,
-          piece_hash,
-          new_absolute_path,
-          state.recheck_delay_seconds,
-          1,
+      let snapshot = state
+      process.spawn_unlinked(fn() {
+        let #(result, worker_state) =
+          resync_with_retry(
+            snapshot,
+            torrent_hash,
+            piece_hash,
+            new_absolute_path,
+            snapshot.recheck_delay_seconds,
+            1,
+          )
+        process.send(
+          snapshot.self,
+          ResyncFinished(
+            ResyncOutcome(torrent_hash:, new_absolute_path:, result:),
+            worker_state.session,
+            reply_to,
+          ),
         )
-      let state = case result {
+      })
+      actor.continue(state)
+    }
+    ResyncFinished(outcome, session, reply_to) -> {
+      let state = case outcome.result {
         Ok(Nil) ->
           IndexState(
             ..state,
+            session:,
             resync_success_count: state.resync_success_count + 1,
           )
         Error(_) ->
           IndexState(
             ..state,
+            session:,
             resync_failure_count: state.resync_failure_count + 1,
           )
       }
-      process.send(reply_to, result)
+      process.send(reply_to, outcome)
       actor.continue(state)
     }
     Shutdown -> actor.stop()
@@ -388,7 +448,7 @@ pub fn find_match(index: Index, piece_hash: String) -> MatchResult {
     Error(Nil) -> NoMatch
     Ok([]) -> NoMatch
     Ok([torrent_hash]) -> Matched(torrent_hash:, piece_hash:)
-    Ok(candidates) -> Ambiguous(candidates:)
+    Ok(candidates) -> Ambiguous(piece_hash:, candidates:)
   }
 }
 
@@ -454,6 +514,16 @@ fn do_resync(
     resolve(index, torrent_hash, piece_hash)
     |> result.replace_error(UnknownMatch(torrent_hash:, piece_hash:)),
   )
+
+  use _ <- result.try(case simplifile.file_info(new_absolute_path) {
+    Ok(info) if info.size == file.size -> Ok(Nil)
+    Ok(info) ->
+      Error(SizeMismatch(torrent_hash:, expected: file.size, actual: info.size))
+    // The file vanished between the fs event and now (or isn't statable) —
+    // let the rename fail downstream with qBittorrent's own error rather
+    // than inventing a size of 0 here.
+    Error(_) -> Ok(Nil)
+  })
 
   use new_relative_path <- result.try(
     case relative_to(entry.save_path, new_absolute_path) {

@@ -5,6 +5,7 @@ import arr_sync/logging
 import arr_sync/matcher/torrent_index
 import arr_sync/watcher/fs_watcher.{type FsEvent}
 import gleam/erlang/process.{type Subject}
+import gleam/list
 import gleam/option.{None, Some}
 import gleam/otp/actor
 import gleam/string
@@ -12,11 +13,16 @@ import simplifile
 
 pub type Message {
   HandleFsEvent(FsEvent)
+  HandleResyncOutcome(torrent_index.ResyncOutcome)
   Shutdown
 }
 
 type SyncerState {
-  SyncerState(config: Config, index: Subject(torrent_index.Message))
+  SyncerState(
+    config: Config,
+    index: Subject(torrent_index.Message),
+    resync_outcomes: Subject(torrent_index.ResyncOutcome),
+  )
 }
 
 pub fn start(
@@ -30,16 +36,19 @@ pub fn start(
 
     // fs_watcher only knows Subject(FsEvent), not our own Message type, so
     // we hand it a dedicated subject and fold its events into our own
-    // mailbox pre-wrapped as HandleFsEvent via select_map.
+    // mailbox pre-wrapped as HandleFsEvent via select_map. Same pattern for
+    // resync outcomes, which torrent_index sends back asynchronously.
     let fs_event_subject = process.new_subject()
     process.send(watcher, fs_watcher.Subscribe(fs_event_subject))
+    let resync_outcomes = process.new_subject()
 
     let selector =
       process.new_selector()
       |> process.select(subject)
       |> process.select_map(fs_event_subject, HandleFsEvent)
+      |> process.select_map(resync_outcomes, HandleResyncOutcome)
 
-    actor.initialised(SyncerState(config:, index:))
+    actor.initialised(SyncerState(config:, index:, resync_outcomes:))
     |> actor.selecting(selector)
     |> actor.returning(subject)
     |> Ok
@@ -55,6 +64,10 @@ fn handle_message(
   case message {
     HandleFsEvent(fs_event) -> {
       handle_fs_event(state, fs_event)
+      actor.continue(state)
+    }
+    HandleResyncOutcome(outcome) -> {
+      handle_resync_outcome(state, outcome)
       actor.continue(state)
     }
     Shutdown -> actor.stop()
@@ -87,42 +100,75 @@ fn resync(state: SyncerState, path: String) -> Nil {
 
   case torrent_index.find_first_match(path, piece_sizes, lookup) {
     Ok(torrent_index.Matched(torrent_hash, piece_hash)) -> {
-      let result =
-        process.call(state.index, 10_000, torrent_index.Resync(
+      // Fire-and-forget: a resync takes seconds (recheck delay, retry
+      // backoffs), and the next fs event can't wait on it — the outcome
+      // comes back as a HandleResyncOutcome message instead.
+      process.send(
+        state.index,
+        torrent_index.Resync(
           torrent_hash,
           piece_hash,
           path,
-          _,
-        ))
-      case result {
-        Ok(Nil) -> {
-          logging.log(
-            logging.Info,
-            path <> " resynced with torrent " <> torrent_hash,
-          )
-          notify_arr_stack(state.config, path)
-        }
-        Error(reason) ->
-          logging.log(
-            logging.Error,
-            "failed to resync "
-              <> path
-              <> " with torrent "
-              <> torrent_hash
-              <> ": "
-              <> string.inspect(reason),
-          )
-      }
-    }
-    Ok(torrent_index.Ambiguous(candidates)) ->
+          state.resync_outcomes,
+        ),
+      )
       logging.log(
-        logging.Warning,
+        logging.Info,
+        path <> " matches torrent " <> torrent_hash <> ", resyncing",
+      )
+    }
+    // Several torrents sharing a piece hash means the same content seeded
+    // more than once (cross-seeding across trackers) — every candidate
+    // needs the resync, not none of them. do_resync's size check guards
+    // the pathological case of torrents sharing only their first piece.
+    Ok(torrent_index.Ambiguous(piece_hash, candidates)) -> {
+      logging.log(
+        logging.Info,
         path
-          <> " matches multiple torrents, skipping: "
+          <> " matches multiple torrents (cross-seed), resyncing all: "
           <> string.join(candidates, ", "),
       )
+      list.each(candidates, fn(torrent_hash) {
+        process.send(
+          state.index,
+          torrent_index.Resync(
+            torrent_hash,
+            piece_hash,
+            path,
+            state.resync_outcomes,
+          ),
+        )
+      })
+    }
     Ok(torrent_index.NoMatch) | Error(Nil) ->
       logging.log(logging.Info, "no torrent matches " <> path)
+  }
+}
+
+fn handle_resync_outcome(
+  state: SyncerState,
+  outcome: torrent_index.ResyncOutcome,
+) -> Nil {
+  case outcome.result {
+    Ok(Nil) -> {
+      logging.log(
+        logging.Info,
+        outcome.new_absolute_path
+          <> " resynced with torrent "
+          <> outcome.torrent_hash,
+      )
+      notify_arr_stack(state.config, outcome.new_absolute_path)
+    }
+    Error(reason) ->
+      logging.log(
+        logging.Error,
+        "failed to resync "
+          <> outcome.new_absolute_path
+          <> " with torrent "
+          <> outcome.torrent_hash
+          <> ": "
+          <> string.inspect(reason),
+      )
   }
 }
 

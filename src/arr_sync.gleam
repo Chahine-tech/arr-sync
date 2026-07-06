@@ -219,7 +219,7 @@ fn report_match(path: String, index: torrent_index.Index) -> Nil {
   case torrent_index.find_first_match(path, piece_sizes, lookup) {
     Ok(torrent_index.Matched(torrent_hash, _piece_hash)) ->
       logging.log(logging.Info, path <> " matches torrent " <> torrent_hash)
-    Ok(torrent_index.Ambiguous(candidates)) ->
+    Ok(torrent_index.Ambiguous(_piece_hash, candidates)) ->
       logging.log(
         logging.Warning,
         path <> " matches multiple torrents: " <> string.join(candidates, ", "),
