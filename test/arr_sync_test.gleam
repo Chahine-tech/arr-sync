@@ -416,6 +416,41 @@ pub fn config_load_parses_a_full_config_test() {
   assert radarr.api_key == "radarr-key"
 }
 
+pub fn config_load_prefers_the_password_env_var_over_the_file_test() {
+  set_env("QBITTORRENT_PASSWORD", "from-env")
+  let loaded = config.load("test/fixtures/valid_config.toml")
+  unset_env("QBITTORRENT_PASSWORD")
+
+  let assert Ok(loaded) = loaded
+  assert loaded.qbittorrent.password == "from-env"
+}
+
+pub fn config_load_accepts_a_missing_password_field_when_env_var_is_set_test() {
+  set_env("QBITTORRENT_PASSWORD", "from-env")
+  let loaded = config.load("test/fixtures/env_password_config.toml")
+  unset_env("QBITTORRENT_PASSWORD")
+
+  let assert Ok(loaded) = loaded
+  assert loaded.qbittorrent.password == "from-env"
+}
+
+pub fn config_load_ignores_an_empty_password_env_var_test() {
+  // docker compose substitutes an undefined variable as "" — that must not
+  // shadow the real password in the file.
+  set_env("QBITTORRENT_PASSWORD", "")
+  let loaded = config.load("test/fixtures/valid_config.toml")
+  unset_env("QBITTORRENT_PASSWORD")
+
+  let assert Ok(loaded) = loaded
+  assert loaded.qbittorrent.password == "secret"
+}
+
+@external(erlang, "arr_sync_test_ffi", "set_env")
+fn set_env(name: String, value: String) -> Nil
+
+@external(erlang, "arr_sync_test_ffi", "unset_env")
+fn unset_env(name: String) -> Nil
+
 pub fn config_load_treats_missing_optional_sections_as_none_test() {
   let assert Ok(loaded) = config.load("test/fixtures/minimal_config.toml")
 
